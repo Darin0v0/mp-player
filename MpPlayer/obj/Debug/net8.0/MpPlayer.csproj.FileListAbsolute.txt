@@ -1,0 +1,14 @@
+/home/dawid/Dokumenty/c#/player/MpPlayer/bin/Debug/net8.0/MpPlayer
+/home/dawid/Dokumenty/c#/player/MpPlayer/bin/Debug/net8.0/MpPlayer.deps.json
+/home/dawid/Dokumenty/c#/player/MpPlayer/bin/Debug/net8.0/MpPlayer.runtimeconfig.json
+/home/dawid/Dokumenty/c#/player/MpPlayer/bin/Debug/net8.0/MpPlayer.dll
+/home/dawid/Dokumenty/c#/player/MpPlayer/bin/Debug/net8.0/MpPlayer.pdb
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/MpPlayer.GeneratedMSBuildEditorConfig.editorconfig
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/MpPlayer.AssemblyInfoInputs.cache
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/MpPlayer.AssemblyInfo.cs
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/MpPlayer.csproj.CoreCompileInputs.cache
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/MpPlayer.dll
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/refint/MpPlayer.dll
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/MpPlayer.pdb
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/MpPlayer.genruntimeconfig.cache
+/home/dawid/Dokumenty/c#/player/MpPlayer/obj/Debug/net8.0/ref/MpPlayer.dll

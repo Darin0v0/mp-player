@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "dgSpecHash": "YjEcmp1PANc=",
+  "success": true,
+  "projectFilePath": "/home/dawid/Dokumenty/c#/player/MpPlayer/MpPlayer.csproj",
+  "expectedPackageFiles": [
+    "/home/dawid/.nuget/packages/microsoft.netcore.app.host.linux-x64/8.0.20/microsoft.netcore.app.host.linux-x64.8.0.20.nupkg.sha512"
+  ],
+  "logs": []
+}
