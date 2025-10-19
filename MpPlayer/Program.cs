@@ -36,7 +36,7 @@ namespace TerminalMusicPlayer
 
         // Theme system
         static Theme currentTheme = Theme.Lain;
-        static Theme[] availableThemes = { Theme.Lain, Theme.SteinGateWhite, Theme.SteinGateBlack };
+        static Theme[] availableThemes = { Theme.Lain, Theme.Cyberpunk, Theme.Matrix, Theme.Solarized, Theme.Dracula, Theme.Monokai };
 
         // Playback mode
         static bool shuffleMode = false;
@@ -61,20 +61,25 @@ namespace TerminalMusicPlayer
         static double totalDuration = 0;
         static bool useMpv = false;
 
-        // Buffer for reducing flickering
-        static char[] screenBuffer;
-        static ConsoleColor[] foregroundBuffer;
-        static ConsoleColor[] backgroundBuffer;
-        static int consoleWidth = 0;
-        static int consoleHeight = 0;
-        static bool bufferInitialized = false;
+        // Animation state
+        static int animationFrame = 0;
+        static DateTime lastAnimationTime = DateTime.Now;
+
+        // Low-level console buffer for flicker-free rendering
+        private static CharInfo[] buffer;
+        private static SmallRect rect;
+        private static IntPtr consoleHandle;
+        private static int consoleWidth, consoleHeight;
 
         // Theme definitions
         enum Theme
         {
             Lain,
-            SteinGateWhite,
-            SteinGateBlack
+            Cyberpunk,
+            Matrix,
+            Solarized,
+            Dracula,
+            Monokai
         }
 
         struct ThemeColors
@@ -92,7 +97,60 @@ namespace TerminalMusicPlayer
             public ConsoleColor VolumeBg;
             public ConsoleColor Status;
             public ConsoleColor Glitch;
+            public ConsoleColor Warning;
+            public ConsoleColor Success;
         }
+
+        // Windows API structures for low-level console access
+        [StructLayout(LayoutKind.Sequential)]
+        public struct Coord
+        {
+            public short X;
+            public short Y;
+            public Coord(short X, short Y)
+            {
+                this.X = X;
+                this.Y = Y;
+            }
+        };
+
+        [StructLayout(LayoutKind.Explicit)]
+        public struct CharUnion
+        {
+            [FieldOffset(0)] public char UnicodeChar;
+            [FieldOffset(0)] public byte AsciiChar;
+        }
+
+        [StructLayout(LayoutKind.Explicit)]
+        public struct CharInfo
+        {
+            [FieldOffset(0)] public CharUnion Char;
+            [FieldOffset(2)] public short Attributes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct SmallRect
+        {
+            public short Left;
+            public short Top;
+            public short Right;
+            public short Bottom;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern IntPtr GetStdHandle(int nStdHandle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool WriteConsoleOutput(IntPtr hConsoleOutput, CharInfo[] lpBuffer, Coord dwBufferSize, Coord dwBufferCoord, ref SmallRect lpWriteRegion);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+
+        const int STD_OUTPUT_HANDLE = -11;
+        const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
 
         static ThemeColors GetThemeColors(Theme theme)
         {
@@ -112,59 +170,128 @@ namespace TerminalMusicPlayer
                     Volume = ConsoleColor.Cyan,
                     VolumeBg = ConsoleColor.DarkGray,
                     Status = ConsoleColor.Green,
-                    Glitch = ConsoleColor.Red
+                    Glitch = ConsoleColor.Red,
+                    Warning = ConsoleColor.Yellow,
+                    Success = ConsoleColor.Green
                 },
-                Theme.SteinGateWhite => new ThemeColors
-                {
-                    Background = ConsoleColor.White,
-                    Text = ConsoleColor.DarkBlue,
-                    Primary = ConsoleColor.DarkCyan,
-                    Secondary = ConsoleColor.DarkMagenta,
-                    Accent = ConsoleColor.DarkRed,
-                    Border = ConsoleColor.Gray,
-                    Highlight = ConsoleColor.Blue,
-                    Progress = ConsoleColor.DarkGreen,
-                    ProgressBg = ConsoleColor.DarkGray,
-                    Volume = ConsoleColor.DarkCyan,
-                    VolumeBg = ConsoleColor.DarkGray,
-                    Status = ConsoleColor.DarkGreen,
-                    Glitch = ConsoleColor.Red
-                },
-                Theme.SteinGateBlack => new ThemeColors
+                Theme.Cyberpunk => new ThemeColors
                 {
                     Background = ConsoleColor.Black,
                     Text = ConsoleColor.White,
-                    Primary = ConsoleColor.Cyan,
-                    Secondary = ConsoleColor.DarkCyan,
+                    Primary = ConsoleColor.Blue,
+                    Secondary = ConsoleColor.DarkBlue,
                     Accent = ConsoleColor.Magenta,
-                    Border = ConsoleColor.DarkCyan,
-                    Highlight = ConsoleColor.Blue,
+                    Border = ConsoleColor.DarkMagenta,
+                    Highlight = ConsoleColor.Cyan,
+                    Progress = ConsoleColor.Cyan,
+                    ProgressBg = ConsoleColor.DarkGray,
+                    Volume = ConsoleColor.Blue,
+                    VolumeBg = ConsoleColor.DarkGray,
+                    Status = ConsoleColor.Green,
+                    Glitch = ConsoleColor.Yellow,
+                    Warning = ConsoleColor.Yellow,
+                    Success = ConsoleColor.Green
+                },
+                Theme.Matrix => new ThemeColors
+                {
+                    Background = ConsoleColor.Black,
+                    Text = ConsoleColor.Green,
+                    Primary = ConsoleColor.DarkGreen,
+                    Secondary = ConsoleColor.Green,
+                    Accent = ConsoleColor.White,
+                    Border = ConsoleColor.DarkGreen,
+                    Highlight = ConsoleColor.White,
                     Progress = ConsoleColor.Green,
+                    ProgressBg = ConsoleColor.DarkGray,
+                    Volume = ConsoleColor.DarkGreen,
+                    VolumeBg = ConsoleColor.DarkGray,
+                    Status = ConsoleColor.White,
+                    Glitch = ConsoleColor.Yellow,
+                    Warning = ConsoleColor.Yellow,
+                    Success = ConsoleColor.White
+                },
+                Theme.Solarized => new ThemeColors
+                {
+                    Background = ConsoleColor.DarkBlue,
+                    Text = ConsoleColor.Gray,
+                    Primary = ConsoleColor.Yellow,
+                    Secondary = ConsoleColor.DarkYellow,
+                    Accent = ConsoleColor.Cyan,
+                    Border = ConsoleColor.DarkCyan,
+                    Highlight = ConsoleColor.White,
+                    Progress = ConsoleColor.Yellow,
                     ProgressBg = ConsoleColor.DarkGray,
                     Volume = ConsoleColor.Cyan,
                     VolumeBg = ConsoleColor.DarkGray,
                     Status = ConsoleColor.Green,
-                    Glitch = ConsoleColor.Red
+                    Glitch = ConsoleColor.Red,
+                    Warning = ConsoleColor.Yellow,
+                    Success = ConsoleColor.Green
+                },
+                Theme.Dracula => new ThemeColors
+                {
+                    Background = ConsoleColor.DarkMagenta,
+                    Text = ConsoleColor.White,
+                    Primary = ConsoleColor.Cyan,
+                    Secondary = ConsoleColor.Blue,
+                    Accent = ConsoleColor.Yellow,
+                    Border = ConsoleColor.DarkBlue,
+                    Highlight = ConsoleColor.Magenta,
+                    Progress = ConsoleColor.Cyan,
+                    ProgressBg = ConsoleColor.DarkGray,
+                    Volume = ConsoleColor.Blue,
+                    VolumeBg = ConsoleColor.DarkGray,
+                    Status = ConsoleColor.Green,
+                    Glitch = ConsoleColor.Red,
+                    Warning = ConsoleColor.Yellow,
+                    Success = ConsoleColor.Green
+                },
+                Theme.Monokai => new ThemeColors
+                {
+                    Background = ConsoleColor.DarkGray,
+                    Text = ConsoleColor.White,
+                    Primary = ConsoleColor.Yellow,
+                    Secondary = ConsoleColor.Magenta,
+                    Accent = ConsoleColor.Green,
+                    Border = ConsoleColor.DarkYellow,
+                    Highlight = ConsoleColor.Cyan,
+                    Progress = ConsoleColor.Green,
+                    ProgressBg = ConsoleColor.Black,
+                    Volume = ConsoleColor.Magenta,
+                    VolumeBg = ConsoleColor.Black,
+                    Status = ConsoleColor.Cyan,
+                    Glitch = ConsoleColor.Red,
+                    Warning = ConsoleColor.Yellow,
+                    Success = ConsoleColor.Green
                 },
                 _ => GetThemeColors(Theme.Lain)
             };
         }
 
-        // ASCII Art for Lain theme
+        // Simple ASCII logos
         static readonly string[] lainLogo = {
-            "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
-            "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
-            "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
-            "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓",
-            "▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓"
+            "  _                    _       ",
+            " | |    __ _ _ __   __| | ___  ",
+            " | |   / _` | '_ \\ / _` |/ _ \\ ",
+            " | |__| (_| | | | | (_| | (_) |",
+            " |_____\\__,_|_| |_|\\__,_|\\___/ "
         };
 
-        static readonly string[] glitchText = {
-            "01001100 01000001 01001001 01001110",
-            "CONNECTING TO THE WIRED...",
-            "PROTOCOL: TCP/IP",
-            "STATUS: ONLINE",
-            "USER: LAIN_IWAKURA"
+        static readonly string[] cyberpunkLogo = {
+            "   ____      _                 _    ",
+            "  / ___|   _| |__   ___ _ __  | | __",
+            " | |  | | | | '_ \\ / _ \\ '__| | |/ /",
+            " | |__| |_| | |_) |  __/ |    |   < ",
+            "  \\____\\__, |_.__/ \\___|_|    |_|\\_\\",
+            "       |___/                        "
+        };
+
+        static readonly string[] matrixLogo = {
+            "  __  __       _   _             ",
+            " |  \\/  | __ _| |_| |_ ___ _ __  ",
+            " | |\\/| |/ _` | __| __/ _ \\ '__| ",
+            " | |  | | (_| | |_| ||  __/ |    ",
+            " |_|  |_|\\__,_|\\__|\\__\\___|_|    "
         };
 
         // IPC Client for MPV
@@ -174,6 +301,8 @@ namespace TerminalMusicPlayer
             private Stream? _stream;
             private Thread? _readThread;
             private bool _isDisposed = false;
+            private Socket? _socket;
+            private NamedPipeClientStream? _pipeClient;
 
             public MpvIpcClient(string socketPath)
             {
@@ -188,29 +317,27 @@ namespace TerminalMusicPlayer
                 {
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
                     {
-                        var pipeClient = new NamedPipeClientStream(".", _socketPath, PipeDirection.InOut);
-                        pipeClient.Connect(3000);
-                        _stream = pipeClient;
+                        _pipeClient = new NamedPipeClientStream(".", _socketPath, PipeDirection.InOut);
+                        _pipeClient.Connect(3000);
+                        _stream = _pipeClient;
                     }
                     else
                     {
-                        var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
+                        _socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.IP);
                         var endPoint = new UnixDomainSocketEndPoint(_socketPath);
-                        socket.Connect(endPoint);
-                        _stream = new NetworkStream(socket, true);
+                        _socket.Connect(endPoint);
+                        _stream = new NetworkStream(_socket, true);
                     }
 
                     _readThread = new Thread(ReadMessages);
                     _readThread.IsBackground = true;
                     _readThread.Start();
 
-                    // Enable property observation
                     SendCommand(new { command = new object[] { "observe_property", 1, "pause" } });
                     SendCommand(new { command = new object[] { "observe_property", 2, "time-pos" } });
                     SendCommand(new { command = new object[] { "observe_property", 3, "duration" } });
                     SendCommand(new { command = new object[] { "observe_property", 4, "volume" } });
                     
-                    // Request initial volume
                     Thread.Sleep(100);
                     SendCommand(new { command = new object[] { "get_property", "volume" } });
                 }
@@ -234,7 +361,6 @@ namespace TerminalMusicPlayer
                         byte[] buffer = Encoding.UTF8.GetBytes(json + "\n");
                         _stream.Write(buffer, 0, buffer.Length);
                         _stream.Flush();
-                        Debug.WriteLine($"Sent: {json}");
                     }
                 }
                 catch (Exception ex)
@@ -291,7 +417,6 @@ namespace TerminalMusicPlayer
             {
                 try
                 {
-                    Debug.WriteLine($"Received: {message}");
                     using JsonDocument doc = JsonDocument.Parse(message);
                     JsonElement root = doc.RootElement;
 
@@ -358,7 +483,6 @@ namespace TerminalMusicPlayer
                             }
                         }
                     }
-                    // Handle get_property responses
                     else if (root.TryGetProperty("error", out JsonElement errorElement) && 
                              errorElement.ValueKind == JsonValueKind.String &&
                              errorElement.GetString() == "success")
@@ -366,7 +490,6 @@ namespace TerminalMusicPlayer
                         if (root.TryGetProperty("data", out JsonElement dataElement) && 
                             dataElement.ValueKind == JsonValueKind.Number)
                         {
-                            // This is likely a response to get_property volume
                             float volumeValue = dataElement.GetSingle();
                             if (volumeValue >= 0 && volumeValue <= 100)
                             {
@@ -384,18 +507,61 @@ namespace TerminalMusicPlayer
 
             public void Dispose()
             {
-                _isDisposed = true;
-                try
+                Dispose(true);
+                GC.SuppressFinalize(this);
+            }
+
+            protected virtual void Dispose(bool disposing)
+            {
+                if (!_isDisposed)
                 {
-                    _stream?.Close();
-                    _stream?.Dispose();
+                    if (disposing)
+                    {
+                        try
+                        {
+                            _readThread?.Join(100);
+                        }
+                        catch { }
+
+                        try
+                        {
+                            _stream?.Close();
+                            _stream?.Dispose();
+                        }
+                        catch { }
+
+                        try
+                        {
+                            _pipeClient?.Close();
+                            _pipeClient?.Dispose();
+                        }
+                        catch { }
+
+                        try
+                        {
+                            _socket?.Close();
+                            _socket?.Dispose();
+                        }
+                        catch { }
+
+                        if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+                        {
+                            try 
+                            { 
+                                if (File.Exists(_socketPath))
+                                    File.Delete(_socketPath); 
+                            } 
+                            catch { }
+                        }
+                    }
+
+                    _isDisposed = true;
                 }
-                catch { }
-                
-                if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-                {
-                    try { File.Delete(_socketPath); } catch { }
-                }
+            }
+
+            ~MpvIpcClient()
+            {
+                Dispose(false);
             }
         }
 
@@ -409,9 +575,13 @@ namespace TerminalMusicPlayer
 
         static void Main(string[] args)
         {
+            // Initialize low-level console buffer
+            InitializeConsoleBuffer();
+
             Console.OutputEncoding = Encoding.UTF8;
+            Console.InputEncoding = Encoding.UTF8;
             Console.CursorVisible = false;
-            Console.Title = "LAIN MUSIC PLAYER";
+            Console.Title = "TERMINAL MUSIC PLAYER";
             Console.TreatControlCAsInput = true;
 
             try
@@ -423,7 +593,6 @@ namespace TerminalMusicPlayer
                     return;
                 }
 
-                InitializeConsole();
                 SetInitialDirectory();
 
                 if (args.Length > 0)
@@ -446,7 +615,7 @@ namespace TerminalMusicPlayer
                     {
                         consoleWidth = Console.WindowWidth;
                         consoleHeight = Console.WindowHeight;
-                        InitializeConsole();
+                        InitializeConsoleBuffer();
                         
                         if (showThemeSelector)
                             DrawThemeSelector();
@@ -460,18 +629,24 @@ namespace TerminalMusicPlayer
                         needsRedraw = false;
                     }
 
-                    // Clear status message after 3 seconds
                     if (!string.IsNullOrEmpty(statusMessage) && (DateTime.Now - statusMessageTime).TotalSeconds > 3)
                     {
                         statusMessage = "";
                         needsRedraw = true;
                     }
 
-                    // Apply volume changes if any
                     if (volumeChanged && mpvIpcClient != null && mpvIpcClient.IsConnected)
                     {
                         ApplyVolumeToMpv();
                         volumeChanged = false;
+                    }
+
+                    if ((DateTime.Now - lastAnimationTime).TotalMilliseconds > 200)
+                    {
+                        animationFrame = (animationFrame + 1) % 4;
+                        lastAnimationTime = DateTime.Now;
+                        if (currentTheme == Theme.Lain || currentTheme == Theme.Matrix)
+                            needsRedraw = true;
                     }
 
                     if (Console.KeyAvailable)
@@ -479,7 +654,7 @@ namespace TerminalMusicPlayer
                         HandleInput();
                     }
 
-                    Thread.Sleep(33); // ~30 FPS
+                    Thread.Sleep(50);
                 }
             }
             catch (Exception ex)
@@ -495,27 +670,64 @@ namespace TerminalMusicPlayer
             }
         }
 
-        static void InitializeConsole()
+        static void InitializeConsoleBuffer()
         {
-            Console.Clear();
-            var theme = GetThemeColors(currentTheme);
-            Console.BackgroundColor = theme.Background;
-            Console.ForegroundColor = theme.Text;
-            Console.Clear();
+            consoleWidth = Console.WindowWidth;
+            consoleHeight = Console.WindowHeight;
             
-            // Initialize buffers
-            int bufferSize = consoleWidth * consoleHeight;
-            screenBuffer = new char[bufferSize];
-            foregroundBuffer = new ConsoleColor[bufferSize];
-            backgroundBuffer = new ConsoleColor[bufferSize];
-            
-            for (int i = 0; i < bufferSize; i++)
+            buffer = new CharInfo[consoleWidth * consoleHeight];
+            rect = new SmallRect { Left = 0, Top = 0, Right = (short)consoleWidth, Bottom = (short)consoleHeight };
+            consoleHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+
+            // Enable VT processing on Windows
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                screenBuffer[i] = ' ';
-                foregroundBuffer[i] = theme.Text;
-                backgroundBuffer[i] = theme.Background;
+                if (GetConsoleMode(consoleHandle, out uint mode))
+                {
+                    SetConsoleMode(consoleHandle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                }
             }
-            bufferInitialized = true;
+        }
+
+        static void ClearBuffer()
+        {
+            var theme = GetThemeColors(currentTheme);
+            short bgColor = (short)((int)theme.Background << 4);
+            short fgColor = (short)(int)theme.Text;
+            short attributes = (short)(fgColor | bgColor);
+
+            for (int i = 0; i < buffer.Length; i++)
+            {
+                buffer[i].Attributes = attributes;
+                buffer[i].Char.UnicodeChar = ' ';
+            }
+        }
+
+        static void WriteToBuffer(int x, int y, string text, ConsoleColor foreground, ConsoleColor background)
+        {
+            if (x < 0 || x >= consoleWidth || y < 0 || y >= consoleHeight)
+                return;
+
+            short fgColor = (short)(int)foreground;
+            short bgColor = (short)((int)background << 4);
+            short attributes = (short)(fgColor | bgColor);
+
+            int index = y * consoleWidth + x;
+            for (int i = 0; i < text.Length && index + i < buffer.Length; i++)
+            {
+                if (x + i >= consoleWidth) break;
+                
+                buffer[index + i].Attributes = attributes;
+                buffer[index + i].Char.UnicodeChar = text[i];
+            }
+        }
+
+        static void RenderBuffer()
+        {
+            WriteConsoleOutput(consoleHandle, buffer,
+                new Coord((short)consoleWidth, (short)consoleHeight),
+                new Coord(0, 0),
+                ref rect);
         }
 
         static void ApplyVolumeToMpv()
@@ -525,7 +737,6 @@ namespace TerminalMusicPlayer
             try
             {
                 mpvIpcClient.SendCommand(new { command = new object[] { "set_property", "volume", currentVolume } });
-                Debug.WriteLine($"Volume set to: {currentVolume}");
             }
             catch (Exception ex)
             {
@@ -537,14 +748,14 @@ namespace TerminalMusicPlayer
         {
             Console.Clear();
             Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine("\n\n    ⚠️  MPV NOT FOUND");
+            Console.WriteLine("\n\n    MPV NOT FOUND");
             Console.ForegroundColor = ConsoleColor.White;
             Console.WriteLine("\n    This player requires MPV to be installed.");
             Console.WriteLine("\n    Installation instructions:");
             Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine("    • Windows: winget install mpv");
-            Console.WriteLine("    • macOS:   brew install mpv");
-            Console.WriteLine("    • Linux:   sudo apt install mpv");
+            Console.WriteLine("    - Windows: winget install mpv");
+            Console.WriteLine("    - macOS:   brew install mpv");
+            Console.WriteLine("    - Linux:   sudo apt install mpv");
             Console.ForegroundColor = ConsoleColor.Gray;
             Console.WriteLine("\n    Press any key to exit...");
             Console.ReadKey();
@@ -552,28 +763,21 @@ namespace TerminalMusicPlayer
 
         static void DrawPlayer()
         {
-            if (!bufferInitialized) return;
-            
+            ClearBuffer();
             var theme = GetThemeColors(currentTheme);
             int width = consoleWidth;
             int height = consoleHeight;
 
-            Console.SetCursorPosition(0, 0);
-            Console.BackgroundColor = theme.Background;
-            Console.ForegroundColor = theme.Text;
+            // Draw border
+            DrawBorder(width, height, theme);
 
-            // Draw border with Lain-style glitch effect
-            DrawLainBorder(width, height, theme);
-
-            // Draw Lain-style header
-            DrawLainHeader(width, theme);
+            // Draw header
+            DrawHeader(width, theme);
 
             // Now Playing section
-            DrawBox(2, 6, width - 4, 6, "PROTOCOL: AUDIO_STREAM", theme.Primary, theme);
+            DrawSection(2, 6, width - 4, 6, "NOW PLAYING", theme.Primary, theme);
 
-            // Track name with glitch effect for Lain theme
-            Console.SetCursorPosition(4, 8);
-            Console.Write("🎵 ");
+            // Track name
             if (!string.IsNullOrEmpty(currentFileName))
             {
                 string displayName = Path.GetFileNameWithoutExtension(currentFileName);
@@ -581,347 +785,240 @@ namespace TerminalMusicPlayer
                 if (displayName.Length > maxNameLength)
                     displayName = displayName.Substring(0, maxNameLength - 3) + "...";
                 
-                if (currentTheme == Theme.Lain && DateTime.Now.Second % 4 == 0)
-                {
-                    Console.ForegroundColor = theme.Glitch;
-                    Console.Write(displayName);
-                    Console.ForegroundColor = theme.Text;
-                }
-                else
-                {
-                    Console.Write(displayName);
-                }
+                WriteToBuffer(4, 8, "> " + displayName, theme.Text, theme.Background);
             }
             else
             {
-                Console.Write("NO SIGNAL");
+                WriteToBuffer(4, 8, "> NO TRACK SELECTED", theme.Text, theme.Background);
             }
 
-            // Status with cyberpunk icons
-            Console.SetCursorPosition(4, 9);
-            Console.ForegroundColor = isPaused ? theme.Secondary : theme.Progress;
-            string statusIcon = isPaused ? "⏸" : "▶";
-            Console.Write($"{statusIcon} {(isPaused ? "STANDBY" : "TRANSMITTING")}");
+            // Status
+            WriteToBuffer(4, 9, "Status: ", theme.Secondary, theme.Background);
+            string statusText = isPaused ? "PAUSED" : "PLAYING";
+            ConsoleColor statusColor = isPaused ? theme.Warning : theme.Success;
+            WriteToBuffer(12, 9, statusText, statusColor, theme.Background);
 
             // Mode indicators
-            Console.SetCursorPosition(width - 25, 9);
-            Console.ForegroundColor = shuffleMode ? theme.Accent : theme.Border;
-            Console.Write("🔀 SHUFFLE ");
-            Console.ForegroundColor = repeatMode ? theme.Accent : theme.Border;
-            Console.Write("🔁 REPEAT");
+            string shuffleStatus = shuffleMode ? "[SHUFFLE ON] " : "[SHUFFLE OFF]";
+            string repeatStatus = repeatMode ? "[REPEAT ON]" : "[REPEAT OFF]";
+            WriteToBuffer(width - 25, 9, shuffleStatus, shuffleMode ? theme.Accent : theme.Border, theme.Background);
+            WriteToBuffer(width - 12, 9, repeatStatus, repeatMode ? theme.Accent : theme.Border, theme.Background);
 
             // Progress section
-            Console.SetCursorPosition(4, 11);
-            Console.ForegroundColor = theme.Text;
+            DrawSection(2, 12, width - 4, 4, "PROGRESS", theme.Secondary, theme);
+            
             string timeDisplay = totalDuration > 0 ? 
                 $"{FormatTime(currentPosition)} / {FormatTime(totalDuration)}" : 
                 $"{FormatTime(currentPosition)} / --:--";
-            Console.Write(timeDisplay);
+            WriteToBuffer(4, 14, timeDisplay, theme.Text, theme.Background);
 
-            // Enhanced progress bar
-            DrawEnhancedProgressBar(4, 12, width - 8, theme);
+            // Progress bar
+            DrawProgressBar(4, 15, width - 8, theme);
 
             // Volume section
-            DrawBox(2, 14, width - 4, 5, "VOLUME CONTROL", theme.Secondary, theme);
+            DrawSection(2, 16, width - 4, 4, "VOLUME", theme.Accent, theme);
             
-            Console.SetCursorPosition(4, 16);
-            Console.ForegroundColor = theme.Secondary;
-            Console.Write("Level: ");
-            Console.ForegroundColor = theme.Text;
-            Console.Write($"{currentVolume:0}%");
-
-            // Enhanced volume bar
-            DrawEnhancedVolumeBar(4, 17, 30, theme);
+            WriteToBuffer(4, 18, $"Level: {currentVolume:0}%", theme.Text, theme.Background);
+            DrawVolumeBar(4, 19, Math.Min(40, width - 12), theme);
 
             // Track info
-            Console.SetCursorPosition(4, 19);
-            Console.ForegroundColor = theme.Text;
-            Console.Write($"TRACK {currentTrackIndex + 1:000} OF {playlist.Count:000}");
+            WriteToBuffer(4, 21, $"Track: {currentTrackIndex + 1} of {playlist.Count}", theme.Text, theme.Background);
 
             // Controls section
-            DrawBox(2, 20, width - 4, height - 23, "CONTROL PROTOCOL", theme.Accent, theme);
+            DrawSection(2, 22, width - 4, height - 25, "CONTROLS", theme.Highlight, theme);
 
-            // Cyberpunk-style controls layout
-            int controlsStartY = 22;
-            string[] leftControls = {
-                " [SPACE]   PLAY/STANDBY",
-                " [→]       NEXT_TRANSMISSION", 
-                " [←]       PREV_TRANSMISSION",
-                " [↑]       VOLUME_UP",
-                " [↓]       VOLUME_DOWN"
+            // Control labels
+            int controlsY = 24;
+            string[][] controls = {
+                new[] { "SPACE", "Play/Pause" },
+                new[] { "RIGHT", "Next Track" },
+                new[] { "LEFT", "Previous Track" },
+                new[] { "UP/DOWN", "Volume" },
+                new[] { "F", $"Shuffle ({(shuffleMode ? "ON" : "OFF")})" },
+                new[] { "R", $"Repeat ({(repeatMode ? "ON" : "OFF")})" },
+                new[] { "E", "File Explorer" },
+                new[] { "A", "All Tracks" },
+                new[] { "T", "Themes" },
+                new[] { "Q", "Quit" }
             };
 
-            string[] rightControls = {
-                " [F]       SHUFFLE_PROTOCOL",
-                " [R]       REPEAT_CYCLE",
-                " [E]       FILE_SYSTEM",
-                " [A]       ALL_TRANSMISSIONS",
-                " [T]       THEME_SELECT",
-                " [Q]       TERMINATE"
-            };
-
-            for (int i = 0; i < leftControls.Length; i++)
+            for (int i = 0; i < controls.Length; i++)
             {
-                Console.SetCursorPosition(4, controlsStartY + i);
-                Console.ForegroundColor = theme.Highlight;
-                Console.Write(leftControls[i].Substring(0, 11));
-                Console.ForegroundColor = theme.Text;
-                Console.Write(leftControls[i].Substring(11));
+                if (controlsY + i >= height - 2) break;
+                
+                WriteToBuffer(4, controlsY + i, controls[i][0], theme.Highlight, theme.Background);
+                WriteToBuffer(4 + controls[i][0].Length + 1, controlsY + i, $" - {controls[i][1]}", theme.Text, theme.Background);
             }
 
-            for (int i = 0; i < rightControls.Length; i++)
-            {
-                Console.SetCursorPosition(width / 2, controlsStartY + i);
-                Console.ForegroundColor = theme.Highlight;
-                Console.Write(rightControls[i].Substring(0, 11));
-                Console.ForegroundColor = theme.Text;
-                Console.Write(rightControls[i].Substring(11));
-            }
-
-            // Footer with theme info and glitch text
-            string themeName = currentTheme.ToString();
-            Console.SetCursorPosition(width / 2 - 15, height - 2);
-            Console.ForegroundColor = theme.Border;
-            
-            if (currentTheme == Theme.Lain && DateTime.Now.Second % 3 == 0)
-            {
-                Console.Write(glitchText[DateTime.Now.Second % glitchText.Length]);
-            }
-            else
-            {
-                Console.Write($"THEME: {themeName} | CONNECT THE WIRED");
-            }
+            // Footer
+            string footerText = $"THEME: {currentTheme}";
+            WriteToBuffer(width / 2 - footerText.Length / 2, height - 2, footerText, theme.Border, theme.Background);
 
             // Status message
             if (!string.IsNullOrEmpty(statusMessage))
             {
-                Console.SetCursorPosition(2, height - 4);
-                Console.ForegroundColor = theme.Status;
-                Console.Write(statusMessage.PadRight(width - 4));
+                WriteToBuffer(2, height - 4, statusMessage.PadRight(width - 4), theme.Status, theme.Background);
             }
+
+            RenderBuffer();
         }
 
-        static void DrawLainBorder(int width, int height, ThemeColors theme)
+        static void DrawBorder(int width, int height, ThemeColors theme)
         {
-            // Top border with Lain-style glitch
-            Console.SetCursorPosition(0, 0);
-            Console.ForegroundColor = theme.Border;
-            if (currentTheme == Theme.Lain && DateTime.Now.Millisecond < 100)
-            {
-                Console.ForegroundColor = theme.Glitch;
-                Console.Write("╬" + new string('╬', width - 2) + "╬");
-            }
-            else
-            {
-                Console.Write("╔" + new string('═', width - 2) + "╗");
-            }
+            // Top border
+            WriteToBuffer(0, 0, "+" + new string('-', width - 2) + "+", theme.Border, theme.Background);
             
             // Side borders
             for (int i = 1; i < height - 1; i++)
             {
-                Console.SetCursorPosition(0, i);
-                Console.Write("║");
-                Console.SetCursorPosition(width - 1, i);
-                Console.Write("║");
+                WriteToBuffer(0, i, "|", theme.Border, theme.Background);
+                WriteToBuffer(width - 1, i, "|", theme.Border, theme.Background);
             }
             
             // Bottom border
-            Console.SetCursorPosition(0, height - 1);
-            if (currentTheme == Theme.Lain && DateTime.Now.Millisecond < 100)
-            {
-                Console.ForegroundColor = theme.Glitch;
-                Console.Write("╬" + new string('╬', width - 2) + "╬");
-            }
-            else
-            {
-                Console.ForegroundColor = theme.Border;
-                Console.Write("╚" + new string('═', width - 2) + "╝");
-            }
+            WriteToBuffer(0, height - 1, "+" + new string('-', width - 2) + "+", theme.Border, theme.Background);
         }
 
-        static void DrawLainHeader(int width, ThemeColors theme)
+        static void DrawHeader(int width, ThemeColors theme)
         {
-            // Lain-style logo or header
-            Console.SetCursorPosition((width - lainLogo[0].Length) / 2, 1);
-            Console.ForegroundColor = theme.Primary;
-            
-            for (int i = 0; i < Math.Min(3, lainLogo.Length); i++)
+            string[] logo = currentTheme switch
             {
-                Console.SetCursorPosition((width - lainLogo[i].Length) / 2, 1 + i);
-                if (currentTheme == Theme.Lain && DateTime.Now.Second % 5 == 0)
-                {
-                    Console.ForegroundColor = theme.Glitch;
-                    Console.Write(lainLogo[i]);
-                    Console.ForegroundColor = theme.Primary;
-                }
-                else
-                {
-                    Console.Write(lainLogo[i]);
-                }
+                Theme.Lain => lainLogo,
+                Theme.Cyberpunk => cyberpunkLogo,
+                Theme.Matrix => matrixLogo,
+                _ => lainLogo
+            };
+
+            string title = currentTheme switch
+            {
+                Theme.Lain => "SERIAL EXPERIMENTS LAIN",
+                Theme.Cyberpunk => "CYBERPUNK MODE",
+                Theme.Matrix => "THE MATRIX",
+                Theme.Solarized => "SOLARIZED",
+                Theme.Dracula => "DRACULA",
+                Theme.Monokai => "MONOKAI",
+                _ => "TERMINAL PLAYER"
+            };
+
+            // Draw logo
+            int logoY = 1;
+            for (int i = 0; i < logo.Length && logoY + i < 4; i++)
+            {
+                int x = width / 2 - logo[i].Length / 2;
+                WriteToBuffer(x, logoY + i, logo[i], theme.Primary, theme.Background);
             }
 
-            // Subtitle with cyberpunk style
-            Console.SetCursorPosition((width - 40) / 2, 4);
-            Console.ForegroundColor = theme.Secondary;
-            string subtitle = "≫ SYSTEM: ONLINE ≪ PROTOCOL: MUSIC_PLAYER ≫ USER: LAIN";
-            Console.Write(subtitle);
+            // Draw title
+            int titleX = width / 2 - title.Length / 2;
+            WriteToBuffer(titleX, logo.Length + 1, title, theme.Primary, theme.Background);
         }
 
-        static void DrawBox(int x, int y, int width, int height, string title, ConsoleColor borderColor, ThemeColors theme)
+        static void DrawSection(int x, int y, int width, int height, string title, ConsoleColor borderColor, ThemeColors theme)
         {
-            Console.ForegroundColor = borderColor;
-            
             // Top border with title
-            string topBorder = "╔";
-            if (!string.IsNullOrEmpty(title))
-            {
-                string titleText = $" {title} ";
-                topBorder += titleText;
-                topBorder += new string('═', width - 2 - titleText.Length);
-            }
-            else
-            {
-                topBorder += new string('═', width - 2);
-            }
-            topBorder += "╗";
-            
-            Console.SetCursorPosition(x, y);
-            Console.Write(topBorder);
+            string topBorder = $"+-- {title} {new string('-', width - 6 - title.Length)}+";
+            WriteToBuffer(x, y, topBorder, borderColor, theme.Background);
             
             // Side borders
             for (int i = 1; i < height - 1; i++)
             {
-                Console.SetCursorPosition(x, y + i);
-                Console.Write("║");
-                Console.SetCursorPosition(x + width - 1, y + i);
-                Console.Write("║");
+                WriteToBuffer(x, y + i, "|", borderColor, theme.Background);
+                WriteToBuffer(x + width - 1, y + i, "|", borderColor, theme.Background);
             }
             
             // Bottom border
-            Console.SetCursorPosition(x, y + height - 1);
-            Console.Write("╚" + new string('═', width - 2) + "╝");
+            string bottomBorder = "+" + new string('-', width - 2) + "+";
+            WriteToBuffer(x, y + height - 1, bottomBorder, borderColor, theme.Background);
         }
 
-        static void DrawEnhancedProgressBar(int x, int y, int width, ThemeColors theme)
+        static void DrawProgressBar(int x, int y, int width, ThemeColors theme)
         {
             double progress = totalDuration > 0 ? Math.Clamp(currentPosition / totalDuration, 0, 1) : 0;
             int barWidth = width - 2;
             int filledWidth = (int)(barWidth * progress);
             
-            Console.SetCursorPosition(x, y);
-            Console.ForegroundColor = theme.Border;
-            Console.Write("[");
+            // Draw bar background
+            string bar = "[" + new string('-', barWidth) + "]";
+            WriteToBuffer(x, y, bar, theme.ProgressBg, theme.Background);
             
-            Console.ForegroundColor = theme.Progress;
-            for (int i = 0; i < filledWidth; i++)
+            // Draw progress
+            if (filledWidth > 0)
             {
-                // Add some glitch effect for Lain theme
-                if (currentTheme == Theme.Lain && DateTime.Now.Millisecond < 50 && i % 3 == 0)
-                {
-                    Console.ForegroundColor = theme.Glitch;
-                    Console.Write("█");
-                    Console.ForegroundColor = theme.Progress;
-                }
-                else
-                {
-                    Console.Write("█");
-                }
+                string progressBar = new string('#', filledWidth);
+                WriteToBuffer(x + 1, y, progressBar, theme.Progress, theme.Background);
             }
             
-            Console.ForegroundColor = theme.ProgressBg;
-            Console.Write(new string('░', barWidth - filledWidth));
-            
-            Console.ForegroundColor = theme.Border;
-            Console.Write("]");
-            
-            // Progress percentage
+            // Percentage
             string percentage = $"({progress * 100:0}%)";
-            Console.SetCursorPosition(x + width + 2, y);
-            Console.ForegroundColor = theme.Text;
-            Console.Write(percentage);
+            WriteToBuffer(x + width + 2, y, percentage, theme.Text, theme.Background);
         }
 
-        static void DrawEnhancedVolumeBar(int x, int y, int width, ThemeColors theme)
+        static void DrawVolumeBar(int x, int y, int width, ThemeColors theme)
         {
             int barWidth = width - 2;
             int filledWidth = (int)(barWidth * (currentVolume / 100f));
             
-            string volumeIcon = currentVolume == 0 ? "🔇" : 
-                               currentVolume < 33 ? "🔈" :
-                               currentVolume < 66 ? "🔉" : 
-                               "🔊";
+            string volumeIcon = currentVolume == 0 ? "[MUTE]" : 
+                               currentVolume < 33 ? "[LOW] " :
+                               currentVolume < 66 ? "[MID] " : 
+                               "[HIGH]";
             
-            Console.SetCursorPosition(x, y);
-            Console.ForegroundColor = theme.Border;
-            Console.Write("[");
+            // Draw bar
+            string bar = "[" + new string('.', barWidth) + "] " + volumeIcon;
+            WriteToBuffer(x, y, bar, theme.VolumeBg, theme.Background);
             
-            Console.ForegroundColor = theme.Volume;
-            Console.Write(new string('|', filledWidth));
-            
-            Console.ForegroundColor = theme.VolumeBg;
-            Console.Write(new string('.', barWidth - filledWidth));
-            
-            Console.ForegroundColor = theme.Border;
-            Console.Write($"] {volumeIcon}");
+            // Draw volume level
+            if (filledWidth > 0)
+            {
+                string volumeBar = new string('|', filledWidth);
+                WriteToBuffer(x + 1, y, volumeBar, theme.Volume, theme.Background);
+            }
         }
 
         static void DrawThemeSelector()
         {
+            ClearBuffer();
             var theme = GetThemeColors(currentTheme);
             int width = consoleWidth;
             int height = consoleHeight;
 
-            Console.Clear();
-            Console.BackgroundColor = theme.Background;
-            Console.ForegroundColor = theme.Text;
-            Console.Clear();
-
-            DrawLainBorder(width, height, theme);
+            DrawBorder(width, height, theme);
 
             // Title
-            Console.SetCursorPosition((width - 20) / 2, 2);
-            Console.ForegroundColor = theme.Primary;
-            Console.Write("🎨 SELECT THEME");
+            string title = "SELECT THEME";
+            WriteToBuffer(width / 2 - title.Length / 2, 2, title, theme.Primary, theme.Background);
 
-            DrawBox(4, 4, width - 8, height - 8, "THEME PROTOCOL", theme.Accent, theme);
+            DrawSection(4, 4, width - 8, height - 8, "AVAILABLE THEMES", theme.Accent, theme);
 
             int startY = 6;
-            string[] themeNames = { "LAIN", "STEINGATE WHITE", "STEINGATE BLACK" };
+            string[] themeNames = { 
+                "LAIN - Cyberpunk Anime Style", 
+                "CYBERPUNK - Neon Futuristic",
+                "MATRIX - Green Code Rain", 
+                "SOLARIZED - Professional Dark",
+                "DRACULA - Purple Elegance",
+                "MONOKAI - Vibrant Contrast"
+            };
 
             for (int i = 0; i < themeNames.Length; i++)
             {
                 bool isSelected = i == selectedIndex;
                 bool isCurrent = currentTheme == (Theme)i;
 
-                Console.SetCursorPosition(6, startY + i * 2);
+                ConsoleColor nameColor = isSelected ? theme.Highlight : 
+                                       isCurrent ? theme.Success : theme.Text;
 
-                if (isSelected)
-                {
-                    Console.BackgroundColor = theme.Highlight;
-                    Console.ForegroundColor = theme.Background;
-                    Console.Write(" ▶ ");
-                }
-                else
-                {
-                    Console.BackgroundColor = theme.Background;
-                    Console.ForegroundColor = theme.Text;
-                    Console.Write("   ");
-                }
-
-                Console.BackgroundColor = isSelected ? theme.Highlight : theme.Background;
-                Console.ForegroundColor = isSelected ? theme.Background : theme.Text;
-
+                string indicator = isSelected ? "> " : "  ";
                 string status = isCurrent ? " [ACTIVE]" : "";
-                Console.Write($" {themeNames[i]}{status}");
 
-                // Reset background
-                Console.BackgroundColor = theme.Background;
+                WriteToBuffer(6, startY + i * 2, indicator + themeNames[i] + status, nameColor, theme.Background);
             }
 
             // Instructions
-            Console.SetCursorPosition(6, height - 4);
-            Console.ForegroundColor = theme.Text;
-            Console.Write("ENTER: APPLY THEME • ESC: BACK • ↑↓: NAVIGATE");
+            string instructions = "ENTER: Apply Theme | ESC: Back | UP/DOWN: Navigate";
+            WriteToBuffer(width / 2 - instructions.Length / 2, height - 4, instructions, theme.Text, theme.Background);
+
+            RenderBuffer();
         }
 
         static string FormatTime(double seconds)
@@ -933,31 +1030,24 @@ namespace TerminalMusicPlayer
 
         static void DrawFileExplorer()
         {
+            ClearBuffer();
             var theme = GetThemeColors(currentTheme);
             int width = consoleWidth;
             int height = consoleHeight;
 
-            Console.Clear();
-            Console.BackgroundColor = theme.Background;
-            Console.ForegroundColor = theme.Text;
-            Console.Clear();
+            DrawBorder(width, height, theme);
 
-            DrawLainBorder(width, height, theme);
-
-            Console.SetCursorPosition(4, 1);
-            Console.ForegroundColor = theme.Primary;
-            Console.Write($"📁 {currentDirectory}");
+            WriteToBuffer(4, 1, $"FOLDER: {currentDirectory}", theme.Primary, theme.Background);
 
             // Calculate pagination
             int startIndex = currentPage * itemsPerPage;
             int endIndex = Math.Min(startIndex + itemsPerPage, fileSystemEntries.Count);
             totalPages = (int)Math.Ceiling((double)fileSystemEntries.Count / itemsPerPage);
 
-            Console.SetCursorPosition(4, 2);
-            Console.ForegroundColor = theme.Text;
-            Console.Write($"ITEMS: {fileSystemEntries.Count} | PAGE {currentPage + 1}/{totalPages} | PLAYLIST: {playlist.Count} TRACKS");
+            WriteToBuffer(4, 2, $"Items: {fileSystemEntries.Count} | Page {currentPage + 1}/{totalPages} | Playlist: {playlist.Count} tracks", 
+                         theme.Text, theme.Background);
 
-            DrawBox(2, 3, width - 4, height - 10, "FILE SYSTEM", theme.Secondary, theme);
+            DrawSection(2, 3, width - 4, height - 10, "FILE SYSTEM", theme.Secondary, theme);
 
             int startY = 5;
             int listHeight = height - 14;
@@ -969,84 +1059,57 @@ namespace TerminalMusicPlayer
 
                 int currentY = startY + (i - startIndex);
 
-                Console.SetCursorPosition(4, currentY);
+                ConsoleColor color = isSelected ? theme.Highlight : 
+                                   entry.IsDirectory ? theme.Primary : theme.Text;
 
-                if (isSelected)
-                {
-                    Console.BackgroundColor = theme.Highlight;
-                    Console.ForegroundColor = theme.Background;
-                    Console.Write(" ▶ ");
-                }
-                else
-                {
-                    Console.BackgroundColor = theme.Background;
-                    Console.ForegroundColor = theme.Text;
-                    Console.Write("   ");
-                }
-
-                Console.BackgroundColor = isSelected ? theme.Highlight : theme.Background;
-                Console.ForegroundColor = isSelected ? theme.Background : 
-                                       entry.IsDirectory ? theme.Primary : theme.Text;
-
-                string icon = entry.IsDirectory ? "📁" : "🎵";
+                string indicator = isSelected ? "> " : "  ";
+                string icon = entry.IsDirectory ? "[DIR] " : "[FILE]";
                 string name = entry.Name;
                 if (name.Length > width - 15)
                     name = name.Substring(0, width - 18) + "...";
 
-                Console.Write($" {icon} {name}");
-
-                Console.BackgroundColor = theme.Background;
+                WriteToBuffer(4, currentY, indicator + icon + " " + name, color, theme.Background);
             }
 
-            // Page navigation info
+            // Page navigation
             if (totalPages > 1)
             {
-                string pageInfo = $"[PAGE {currentPage + 1}/{totalPages}]";
-                Console.SetCursorPosition(width - pageInfo.Length - 2, height - 6);
-                Console.ForegroundColor = theme.Border;
-                Console.Write(pageInfo);
+                string pageInfo = $"[Page {currentPage + 1}/{totalPages}]";
+                WriteToBuffer(width - pageInfo.Length - 2, height - 6, pageInfo, theme.Border, theme.Background);
             }
 
-            // Footer with enhanced controls
-            DrawBox(2, height - 7, width - 4, 5, "CONTROL PROTOCOL", theme.Accent, theme);
+            // Controls
+            DrawSection(2, height - 7, width - 4, 5, "CONTROLS", theme.Accent, theme);
             
-            string controls = "ENTER: OPEN • SPACE: PLAY • A: ADD FOLDER • BACKSPACE: BACK • E: PLAYER • T: THEMES • Q: TERMINATE";
+            string controls = "ENTER: Open | SPACE: Play | A: Add Folder | BACKSPACE: Back | E: Player | T: Themes | Q: Quit";
             if (totalPages > 1)
             {
-                controls += " • PGUP/PGDN: NAVIGATE PAGES";
+                controls += " | PGUP/PGDN: Navigate Pages";
             }
             
-            Console.SetCursorPosition(4, height - 5);
-            Console.ForegroundColor = theme.Text;
-            Console.Write(controls);
+            WriteToBuffer(4, height - 5, controls, theme.Text, theme.Background);
             
             // Status message
             if (!string.IsNullOrEmpty(statusMessage))
             {
-                Console.SetCursorPosition(4, height - 3);
-                Console.ForegroundColor = theme.Status;
-                Console.Write(statusMessage);
+                WriteToBuffer(4, height - 3, statusMessage, theme.Status, theme.Background);
             }
+
+            RenderBuffer();
         }
 
         static void DrawAllTracks()
         {
+            ClearBuffer();
             var theme = GetThemeColors(currentTheme);
             int width = consoleWidth;
             int height = consoleHeight;
 
-            Console.Clear();
-            Console.BackgroundColor = theme.Background;
-            Console.ForegroundColor = theme.Text;
-            Console.Clear();
+            DrawBorder(width, height, theme);
 
-            DrawLainBorder(width, height, theme);
+            WriteToBuffer(4, 1, $"PLAYLIST ({playlist.Count} TRACKS)", theme.Primary, theme.Background);
 
-            Console.SetCursorPosition(4, 1);
-            Console.ForegroundColor = theme.Primary;
-            Console.Write($"🎵 TRANSMISSION QUEUE ({playlist.Count} TRACKS)");
-
-            DrawBox(2, 3, width - 4, height - 8, "ALL TRANSMISSIONS", theme.Accent, theme);
+            DrawSection(2, 3, width - 4, height - 8, "ALL TRACKS", theme.Accent, theme);
 
             int startY = 5;
             int listHeight = height - 12;
@@ -1058,43 +1121,29 @@ namespace TerminalMusicPlayer
 
                 int currentY = startY + i;
 
-                Console.SetCursorPosition(4, currentY);
+                ConsoleColor color = isSelected ? theme.Highlight : 
+                                   isPlaying ? theme.Success : theme.Text;
 
-                if (isSelected)
-                {
-                    Console.BackgroundColor = theme.Highlight;
-                    Console.ForegroundColor = theme.Background;
-                    Console.Write(" ▶ ");
-                }
-                else
-                {
-                    Console.BackgroundColor = theme.Background;
-                    Console.ForegroundColor = theme.Text;
-                    Console.Write("   ");
-                }
-
-                Console.BackgroundColor = isSelected ? theme.Highlight : theme.Background;
-                Console.ForegroundColor = isSelected ? theme.Background : 
-                                       isPlaying ? theme.Progress : theme.Text;
-
-                string playing = isPlaying ? "▶ " : "  ";
+                string indicator = isSelected ? "> " : "  ";
+                string playing = isPlaying ? "> " : "  ";
                 string name = Path.GetFileNameWithoutExtension(playlist[i]);
                 if (name.Length > width - 20)
                     name = name.Substring(0, width - 23) + "...";
 
-                Console.Write($" {playing}{i + 1:00}. {name}");
-
-                Console.BackgroundColor = theme.Background;
+                WriteToBuffer(4, currentY, $"{indicator}{playing}{i + 1:00}. {name}", color, theme.Background);
             }
 
-            // Footer with enhanced controls
-            DrawBox(2, height - 5, width - 4, 4, "CONTROL PROTOCOL", theme.Accent, theme);
+            // Controls
+            DrawSection(2, height - 5, width - 4, 4, "CONTROLS", theme.Accent, theme);
             
-            string controls = "ENTER: PLAY • DELETE: REMOVE • E: PLAYER • T: THEMES • Q: TERMINATE";
-            Console.SetCursorPosition(4, height - 3);
-            Console.ForegroundColor = theme.Text;
-            Console.Write(controls);
+            string controls = "ENTER: Play | DELETE: Remove | E: Player | T: Themes | Q: Quit";
+            WriteToBuffer(4, height - 3, controls, theme.Text, theme.Background);
+
+            RenderBuffer();
         }
+
+        // Input handling and other methods remain the same as previous version
+        // ... (including HandleInput, PlayCurrentTrack, TogglePlayPause, etc.)
 
         static void HandleInput()
         {
@@ -1124,10 +1173,10 @@ namespace TerminalMusicPlayer
                     PreviousTrack();
                     break;
                 case ConsoleKey.UpArrow:
-                    AdjustVolume(10);
+                    AdjustVolume(5);
                     break;
                 case ConsoleKey.DownArrow:
-                    AdjustVolume(-10);
+                    AdjustVolume(-5);
                     break;
                 case ConsoleKey.F:
                     ToggleShuffle();
@@ -1177,7 +1226,7 @@ namespace TerminalMusicPlayer
                     currentTheme = availableThemes[selectedIndex];
                     showThemeSelector = false;
                     needsRedraw = true;
-                    ShowStatusMessage($"PROTOCOL: THEME_CHANGED TO {currentTheme}");
+                    ShowStatusMessage($"Theme changed to: {currentTheme}");
                     break;
                 case ConsoleKey.Escape:
                     showThemeSelector = false;
@@ -1250,7 +1299,7 @@ namespace TerminalMusicPlayer
                         else
                         {
                             AddToPlaylist(entry.FullPath);
-                            ShowStatusMessage($"ADDED TO QUEUE: {Path.GetFileName(entry.FullPath)}");
+                            ShowStatusMessage($"Added to playlist: {Path.GetFileName(entry.FullPath)}");
                             needsRedraw = true;
                         }
                     }
@@ -1270,7 +1319,7 @@ namespace TerminalMusicPlayer
                     {
                         var entry = fileSystemEntries[selectedIndex];
                         AddFolderToPlaylist(entry.FullPath);
-                        ShowStatusMessage($"FOLDER ADDED TO QUEUE: {entry.Name}");
+                        ShowStatusMessage($"Folder added to playlist: {entry.Name}");
                         needsRedraw = true;
                     }
                     break;
@@ -1333,7 +1382,7 @@ namespace TerminalMusicPlayer
                             currentTrackIndex = Math.Max(0, playlist.Count - 1);
                         if (selectedIndex >= playlist.Count)
                             selectedIndex = Math.Max(0, playlist.Count - 1);
-                        ShowStatusMessage($"REMOVED FROM QUEUE: {Path.GetFileName(removedTrack)}");
+                        ShowStatusMessage($"Removed from playlist: {Path.GetFileName(removedTrack)}");
                         needsRedraw = true;
                     }
                     break;
@@ -1359,7 +1408,6 @@ namespace TerminalMusicPlayer
             needsRedraw = true;
         }
 
-        // Player control methods
         static void PlayCurrentTrack()
         {
             if (playlist.Count == 0) return;
@@ -1376,12 +1424,11 @@ namespace TerminalMusicPlayer
 
             isPaused = false;
             needsRedraw = true;
-            ShowStatusMessage($"NOW PLAYING: {Path.GetFileNameWithoutExtension(track)}");
+            ShowStatusMessage($"Now playing: {Path.GetFileNameWithoutExtension(track)}");
         }
 
         static void StartMpvProcess(string filePath)
         {
-            // Create unique socket path
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
                 ipcSocketPath = $"mpv-{Guid.NewGuid()}";
@@ -1391,7 +1438,6 @@ namespace TerminalMusicPlayer
                 ipcSocketPath = Path.Combine(Path.GetTempPath(), $"mpv-{Guid.NewGuid()}.socket");
             }
 
-            // Set volume in command line arguments
             string args = $"--no-video --input-ipc-server={ipcSocketPath} --volume={currentVolume} \"{filePath}\"";
 
             mpvProcess = new Process
@@ -1409,7 +1455,6 @@ namespace TerminalMusicPlayer
 
             mpvProcess.Start();
 
-            // Wait for MPV to start and create socket
             Thread.Sleep(2000);
             mpvIpcClient = new MpvIpcClient(ipcSocketPath);
             mpvIpcClient.Connect();
@@ -1420,7 +1465,7 @@ namespace TerminalMusicPlayer
             if (mpvIpcClient != null && mpvIpcClient.IsConnected)
             {
                 mpvIpcClient.SendCommand(new { command = new object[] { "cycle", "pause" } });
-                ShowStatusMessage(isPaused ? "PROTOCOL: STANDBY" : "PROTOCOL: TRANSMITTING");
+                ShowStatusMessage(isPaused ? "Paused" : "Playing");
             }
         }
 
@@ -1464,7 +1509,7 @@ namespace TerminalMusicPlayer
                 currentVolume = newVolume;
                 volumeChanged = true;
                 needsRedraw = true;
-                ShowStatusMessage($"VOLUME: {currentVolume:0}%");
+                ShowStatusMessage($"Volume: {currentVolume:0}%");
             }
         }
 
@@ -1474,7 +1519,7 @@ namespace TerminalMusicPlayer
             if (shuffleMode)
                 GenerateShuffleOrder();
             needsRedraw = true;
-            ShowStatusMessage($"SHUFFLE PROTOCOL: {(shuffleMode ? "ACTIVATED" : "DEACTIVATED")}");
+            ShowStatusMessage($"Shuffle: {(shuffleMode ? "ON" : "OFF")}");
         }
 
         static void GenerateShuffleOrder()
@@ -1484,7 +1529,6 @@ namespace TerminalMusicPlayer
             if (currentShuffleIndex == -1) currentShuffleIndex = 0;
         }
 
-        // File system methods
         static void SetInitialDirectory()
         {
             currentDirectory = Environment.GetFolderPath(Environment.SpecialFolder.MyMusic);
@@ -1550,11 +1594,11 @@ namespace TerminalMusicPlayer
             }
             catch (UnauthorizedAccessException)
             {
-                ShowStatusMessage("ACCESS DENIED TO THIS DIRECTORY");
+                ShowStatusMessage("Access denied to this directory");
             }
             catch (Exception ex)
             {
-                ShowStatusMessage($"ERROR LOADING DIRECTORY: {ex.Message}");
+                ShowStatusMessage($"Error loading directory: {ex.Message}");
             }
         }
 
@@ -1572,11 +1616,11 @@ namespace TerminalMusicPlayer
             {
                 int addedCount = 0;
                 AddFilesFromFolderRecursive(folderPath, ref addedCount);
-                ShowStatusMessage($"ADDED {addedCount} FILES FROM FOLDER");
+                ShowStatusMessage($"Added {addedCount} files from folder");
             }
             catch (Exception ex)
             {
-                ShowStatusMessage($"ERROR ADDING FOLDER: {ex.Message}");
+                ShowStatusMessage($"Error adding folder: {ex.Message}");
             }
         }
 
@@ -1584,7 +1628,6 @@ namespace TerminalMusicPlayer
         {
             try
             {
-                // Add files from current directory
                 foreach (var file in Directory.GetFiles(folderPath))
                 {
                     if (supportedFormats.Contains(Path.GetExtension(file).ToLower()) && !playlist.Contains(file))
@@ -1594,7 +1637,6 @@ namespace TerminalMusicPlayer
                     }
                 }
 
-                // Recursively add files from subdirectories
                 foreach (var dir in Directory.GetDirectories(folderPath))
                 {
                     AddFilesFromFolderRecursive(dir, ref count);
