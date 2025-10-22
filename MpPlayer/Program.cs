@@ -86,6 +86,12 @@ namespace TerminalMusicPlayer
         static List<MatrixChar> matrixChars = new List<MatrixChar>();
         static float bassLevel = 0f;
         static float trebleLevel = 0f;
+        static float midLevel = 0f;
+
+        // Visualizer animation state
+        static bool visualizerPaused = false;
+        static float pauseTimer = 0f;
+        static float pauseDecayRate = 0.05f;
 
         // Screen buffer for flicker-free rendering
         static char[,] currentBuffer;
@@ -521,8 +527,25 @@ namespace TerminalMusicPlayer
                                     case "pause":
                                         if (dataElement.ValueKind == JsonValueKind.True || dataElement.ValueKind == JsonValueKind.False)
                                         {
+                                            bool wasPaused = isPaused;
                                             isPaused = dataElement.GetBoolean();
-                                            needsRedraw = true;
+                                            
+                                            // Update visualizer state when pause state changes
+                                            if (wasPaused != isPaused)
+                                            {
+                                                visualizerPaused = isPaused;
+                                                if (isPaused)
+                                                {
+                                                    // Start decay when pausing
+                                                    pauseTimer = 1.0f;
+                                                }
+                                                else
+                                                {
+                                                    // Resume animation when playing
+                                                    pauseTimer = 0f;
+                                                }
+                                                needsRedraw = true;
+                                            }
                                         }
                                         break;
                                     case "time-pos":
@@ -790,55 +813,145 @@ namespace TerminalMusicPlayer
             
             lastVisualizerUpdate = DateTime.Now;
 
-            // Generate more realistic audio data with bass, mid, treble simulation
-            float time = (float)DateTime.Now.TimeOfDay.TotalSeconds;
-            
-            // Bass frequencies (0-100Hz simulation)
-            float bass = (float)(Math.Sin(time * 0.5) * 0.3 + Math.Sin(time * 0.8) * 0.2);
-            bassLevel = Math.Clamp(bass + (float)random.NextDouble() * 0.1f, 0, 1);
-            
-            // Treble frequencies (4000-20000Hz simulation)
-            float treble = (float)(Math.Sin(time * 8) * 0.2 + Math.Sin(time * 12) * 0.15);
-            trebleLevel = Math.Clamp(treble + (float)random.NextDouble() * 0.1f, 0, 1);
+            // If music is paused, decay the visualizer
+            if (isPaused)
+            {
+                if (pauseTimer > 0)
+                {
+                    pauseTimer -= pauseDecayRate;
+                    if (pauseTimer < 0) pauseTimer = 0;
+                    
+                    // Apply decay to all audio data
+                    for (int i = 0; i < audioData.Length; i++)
+                    {
+                        audioData[i] *= 0.9f; // Fast decay when pausing
+                    }
+                    
+                    for (int i = 0; i < spectrumData.Length; i++)
+                    {
+                        spectrumData[i] *= 0.9f;
+                    }
+                    
+                    bassLevel *= 0.9f;
+                    midLevel *= 0.9f;
+                    trebleLevel *= 0.9f;
+                }
+                else
+                {
+                    // When fully paused, set minimal values
+                    for (int i = 0; i < audioData.Length; i++)
+                    {
+                        audioData[i] = 0f;
+                    }
+                    
+                    for (int i = 0; i < spectrumData.Length; i++)
+                    {
+                        spectrumData[i] = 0f;
+                    }
+                    
+                    bassLevel = 0f;
+                    midLevel = 0f;
+                    trebleLevel = 0f;
+                }
+                
+                // Still update animations but with minimal movement
+                animationFrame = (animationFrame + 1) % 4;
+                UpdateParticlesMinimal();
+                UpdateStars();
+                UpdateMatrixChars();
+                return;
+            }
 
-            // Update audio data with more realistic patterns
+            // Music is playing - generate realistic audio data
+            float time = (float)DateTime.Now.TimeOfDay.TotalSeconds * 2f;
+            
+            // Bass frequencies (0-100Hz) - slow, powerful waves
+            float bass = (float)(Math.Sin(time * 0.3) * 0.4 + 
+                                 Math.Sin(time * 0.7) * 0.3 + 
+                                 Math.Sin(time * 1.2) * 0.2);
+            bassLevel = Math.Clamp(Math.Abs(bass) + (float)random.NextDouble() * 0.1f, 0, 1);
+            
+            // Mid frequencies (100-4000Hz) - more complex patterns
+            float mid = (float)(Math.Sin(time * 2.0) * 0.3 + 
+                                Math.Sin(time * 3.5) * 0.25 +
+                                Math.Sin(time * 5.2) * 0.15);
+            midLevel = Math.Clamp(Math.Abs(mid) + (float)random.NextDouble() * 0.08f, 0, 1);
+            
+            // Treble frequencies (4000-20000Hz) - fast, detailed patterns
+            float treble = (float)(Math.Sin(time * 8.0) * 0.25 + 
+                                   Math.Sin(time * 12.5) * 0.2 +
+                                   Math.Sin(time * 18.3) * 0.15);
+            trebleLevel = Math.Clamp(Math.Abs(treble) + (float)random.NextDouble() * 0.06f, 0, 1);
+
+            // Update audio data with frequency-based distribution
             for (int i = 0; i < audioData.Length; i++)
             {
                 float frequency = (float)i / audioData.Length;
                 float value = 0f;
 
-                // Bass region
+                // Bass region (0-10% of spectrum)
                 if (frequency < 0.1f)
                 {
-                    value = bassLevel * (1f - frequency * 10f);
+                    float bassFactor = 1f - (frequency / 0.1f);
+                    value = bassLevel * bassFactor * 1.2f;
                 }
-                // Mid region
+                // Low-mid region (10-30%)
                 else if (frequency < 0.3f)
                 {
-                    value = (bassLevel * 0.3f + trebleLevel * 0.7f) * (1f - (frequency - 0.1f) * 5f);
+                    float midFactor = 1f - Math.Abs((frequency - 0.2f) / 0.1f);
+                    value = midLevel * midFactor * 1.1f;
                 }
-                // Treble region
+                // High-mid region (30-60%)
+                else if (frequency < 0.6f)
+                {
+                    float midFactor = 1f - Math.Abs((frequency - 0.45f) / 0.15f);
+                    value = midLevel * midFactor * 0.9f;
+                }
+                // Treble region (60-100%)
                 else
                 {
-                    value = trebleLevel * (1f - (frequency - 0.3f) * 1.4f);
+                    float trebleFactor = 1f - ((frequency - 0.6f) / 0.4f);
+                    value = trebleLevel * trebleFactor * 0.8f;
                 }
 
-                // Add some noise and smooth changes
-                float change = (float)(random.NextDouble() - 0.5) * 0.1f;
-                audioData[i] = Math.Clamp(value + change, 0, 1);
+                // Smooth transitions and add some noise
+                float smoothness = 0.7f;
+                float change = (float)(random.NextDouble() - 0.5) * 0.05f;
+                audioData[i] = audioData[i] * smoothness + (1f - smoothness) * Math.Clamp(value + change, 0, 1);
             }
 
-            // Update spectrum data
+            // Update spectrum data with better frequency grouping
             for (int i = 0; i < spectrumData.Length; i++)
             {
-                int start = i * (audioData.Length / spectrumData.Length);
-                int end = (i + 1) * (audioData.Length / spectrumData.Length);
+                // Non-linear frequency distribution (more detail in bass/mid)
+                float freqPosition = (float)i / spectrumData.Length;
+                float weightedPosition = freqPosition * freqPosition; // Quadratic distribution
+                
+                int start = (int)(weightedPosition * audioData.Length);
+                int end = (int)(((float)(i + 1) / spectrumData.Length) * ((float)(i + 1) / spectrumData.Length) * audioData.Length);
+                
+                if (start == end) end = start + 1;
+                if (end > audioData.Length) end = audioData.Length;
+                
                 float sum = 0;
+                int count = 0;
                 for (int j = start; j < end && j < audioData.Length; j++)
                 {
                     sum += audioData[j];
+                    count++;
                 }
-                spectrumData[i] = sum / (end - start) * visualizerIntensity;
+                
+                if (count > 0)
+                {
+                    float avg = sum / count;
+                    // Apply frequency-specific intensity
+                    if (i < spectrumData.Length / 3) // Bass region
+                        avg *= 1.3f;
+                    else if (i < spectrumData.Length * 2 / 3) // Mid region
+                        avg *= 1.1f;
+                    
+                    spectrumData[i] = avg * visualizerIntensity;
+                }
             }
 
             // Update particles based on audio intensity
@@ -855,6 +968,9 @@ namespace TerminalMusicPlayer
             {
                 UpdateMatrixChars();
             }
+            
+            // Update animation frame
+            animationFrame = (animationFrame + 1) % 4;
         }
 
         static void UpdateParticles()
@@ -898,12 +1014,36 @@ namespace TerminalMusicPlayer
             }
         }
 
+        static void UpdateParticlesMinimal()
+        {
+            // Minimal particle update when paused - just let existing particles fall
+            for (int i = particles.Count - 1; i >= 0; i--)
+            {
+                var particle = particles[i];
+                particle.X += particle.VelocityX * 0.1f; // Slow down
+                particle.Y += particle.VelocityY * 0.1f;
+                particle.VelocityY += 0.02f; // Reduced gravity
+                particle.Life--;
+
+                if (particle.Life <= 0 || particle.Y >= consoleHeight || particle.X < 0 || particle.X >= consoleWidth)
+                {
+                    particles.RemoveAt(i);
+                }
+                else
+                {
+                    particles[i] = particle;
+                }
+            }
+        }
+
         static void UpdateStars()
         {
+            float speedMultiplier = isPaused ? 0.1f : 1.0f; // Slow down stars when paused
+            
             for (int i = 0; i < stars.Count; i++)
             {
                 var star = stars[i];
-                star.Y += star.Speed;
+                star.Y += star.Speed * speedMultiplier;
                 if (star.Y >= consoleHeight)
                 {
                     star.Y = 0;
@@ -916,10 +1056,12 @@ namespace TerminalMusicPlayer
 
         static void UpdateMatrixChars()
         {
+            float speedMultiplier = isPaused ? 0.1f : 1.0f; // Slow down matrix when paused
+            
             for (int i = matrixChars.Count - 1; i >= 0; i--)
             {
                 var mc = matrixChars[i];
-                mc.Y += mc.Speed;
+                mc.Y += mc.Speed * speedMultiplier;
                 mc.Life--;
 
                 if (mc.Life <= 0 || mc.Y >= consoleHeight)
@@ -932,8 +1074,8 @@ namespace TerminalMusicPlayer
                 matrixChars[i] = mc;
             }
 
-            // Add new matrix characters occasionally
-            if (matrixChars.Count < 300 && random.NextDouble() > 0.7)
+            // Add new matrix characters occasionally (less frequently when paused)
+            if (matrixChars.Count < 300 && random.NextDouble() > (isPaused ? 0.9 : 0.7))
             {
                 matrixChars.Add(new MatrixChar
                 {
@@ -1065,8 +1207,8 @@ namespace TerminalMusicPlayer
                 volumeChanged = false;
             }
 
-            // Animation updates
-            if ((DateTime.Now - lastAnimationTime).TotalMilliseconds > 100)
+            // Animation updates (only if not paused)
+            if (!isPaused && (DateTime.Now - lastAnimationTime).TotalMilliseconds > 100)
             {
                 animationFrame = (animationFrame + 1) % 4;
                 lastAnimationTime = DateTime.Now;
@@ -1171,12 +1313,12 @@ namespace TerminalMusicPlayer
             // Visualizer section - FULL WIDTH
             if (showVisualizer)
             {
-                int visualizerHeight = Math.Min(12, height / 3);
+                int visualizerHeight = Math.Min(16, height / 3);
                 DrawVisualizerToBuffer(2, 4, width - 4, visualizerHeight, theme);
             }
 
             // Now Playing section
-            int nowPlayingY = showVisualizer ? 17 : 6;
+            int nowPlayingY = showVisualizer ? 21 : 6;
             if (nowPlayingY + 10 >= height) nowPlayingY = 6;
 
             DrawBoxToBuffer(2, nowPlayingY, width - 4, 6, "NOW PLAYING", theme.Primary, theme);
@@ -1202,11 +1344,17 @@ namespace TerminalMusicPlayer
             ConsoleColor statusColor = isPaused ? theme.Warning : theme.Success;
             WriteToBuffer(12, nowPlayingY + 3, statusText, statusColor, theme.Background);
 
+            // Visualizer state indicator
+            if (isPaused)
+            {
+                WriteToBuffer(width - 20, nowPlayingY + 3, "⏸ VISUALIZER PAUSED", theme.Warning, theme.Background);
+            }
+
             // Mode indicators
             string shuffleIcon = shuffleMode ? "🔀" : "▶";
             string repeatIcon = repeatMode ? "🔁" : "▶";
-            WriteToBuffer(width - 24, nowPlayingY + 3, shuffleIcon + " SHUFFLE", shuffleMode ? theme.Accent : theme.Border, theme.Background);
-            WriteToBuffer(width - 12, nowPlayingY + 3, repeatIcon + " REPEAT", repeatMode ? theme.Accent : theme.Border, theme.Background);
+            WriteToBuffer(width - 24, nowPlayingY + 2, shuffleIcon + " SHUFFLE", shuffleMode ? theme.Accent : theme.Border, theme.Background);
+            WriteToBuffer(width - 12, nowPlayingY + 2, repeatIcon + " REPEAT", repeatMode ? theme.Accent : theme.Border, theme.Background);
 
             // Progress section
             int progressY = nowPlayingY + 6;
@@ -1248,6 +1396,7 @@ namespace TerminalMusicPlayer
                     new[] { "→", "Next Track" },
                     new[] { "←", "Previous Track" },
                     new[] { "↑/↓", "Volume" },
+                    new[] { "+/-", "Visualizer Intensity" },
                     new[] { "F", $"Shuffle ({(shuffleMode ? "ON" : "OFF")})" },
                     new[] { "R", $"Repeat ({(repeatMode ? "ON" : "OFF")})" },
                     new[] { "V", $"Visualizer ({(showVisualizer ? "ON" : "OFF")})" },
@@ -1268,7 +1417,8 @@ namespace TerminalMusicPlayer
             }
 
             // Footer with FPS info
-            string footerText = $"│ THEME: {currentTheme} │ VISUALIZER: {visualizerMode} │ FPS: {currentFps:0.0} │";
+            string visualizerState = isPaused ? "PAUSED" : $"{visualizerMode}";
+            string footerText = $"│ THEME: {currentTheme} │ VISUALIZER: {visualizerState} │ INTENSITY: {visualizerIntensity:0.0}x │ FPS: {currentFps:0.0} │";
             WriteToBuffer(width / 2 - footerText.Length / 2, height - 2, footerText, theme.Border, theme.Background);
 
             // Status message
@@ -1281,12 +1431,21 @@ namespace TerminalMusicPlayer
 
         static void DrawVisualizerToBuffer(int x, int y, int width, int height, ThemeColors theme)
         {
-            DrawBoxToBuffer(x, y, width, height, $"VISUALIZER - {visualizerMode}", theme.Visualizer1, theme);
+            string visualizerTitle = isPaused ? $"VISUALIZER - {visualizerMode} - PAUSED" : $"VISUALIZER - {visualizerMode}";
+            DrawBoxToBuffer(x, y, width, height, visualizerTitle, theme.Visualizer1, theme);
 
             int visX = x + 2;
             int visY = y + 2;
             int visWidth = width - 4;
             int visHeight = height - 4;
+
+            // If paused and no activity, show paused message
+            if (isPaused && pauseTimer <= 0 && spectrumData.All(s => s < 0.01f))
+            {
+                string pausedMsg = "⏸ VISUALIZER PAUSED";
+                WriteToBuffer(x + width / 2 - pausedMsg.Length / 2, y + height / 2, pausedMsg, theme.Warning, theme.Background);
+                return;
+            }
 
             switch (visualizerMode)
             {
@@ -1319,49 +1478,110 @@ namespace TerminalMusicPlayer
 
         static void DrawBarVisualizer(int x, int y, int width, int height, ThemeColors theme)
         {
-            int barCount = Math.Min(width, 64);
+            int barCount = Math.Min(width, 48);
             int barWidth = Math.Max(1, width / barCount);
             
             for (int i = 0; i < barCount; i++)
             {
-                float intensity = spectrumData[i % spectrumData.Length] * (1f + (float)Math.Sin(animationFrame * 0.5f + i * 0.1f) * 0.3f);
-                int barHeight = (int)(intensity * height);
+                // Apply frequency response curve
+                float freqResponse = i < barCount / 3 ? 1.3f : 
+                                   i < barCount * 2 / 3 ? 1.1f : 0.9f;
+                
+                float intensity = spectrumData[i % spectrumData.Length] * freqResponse;
+                
+                // Add some dynamic movement (only when playing)
+                float movement = isPaused ? 0f : (float)Math.Sin(animationFrame * 0.5f + i * 0.2f) * 0.1f;
+                intensity = Math.Clamp(intensity + movement, 0, 1);
+                
+                int barHeight = (int)(intensity * height * 1.1f);
                 
                 for (int h = 0; h < barHeight; h++)
                 {
                     int currentY = y + height - 1 - h;
                     if (currentY >= y && currentY < y + height)
                     {
-                        char block = GetBlockChar(h, barHeight);
-                        ConsoleColor color = GetVisualizerColor(intensity, theme);
+                        char block;
+                        if (h == barHeight - 1) 
+                            block = '▀';
+                        else if (h < barHeight * 0.7f)
+                            block = '█';
+                        else
+                            block = '▓';
+                        
+                        ConsoleColor color = GetVisualizerColor((float)h / height, theme);
                         int barX = x + i * barWidth;
                         if (barX < x + width)
                         {
                             WriteToBuffer(barX, currentY, block.ToString(), color, theme.Background);
+                            if (barWidth > 1 && barX + 1 < x + width)
+                            {
+                                WriteToBuffer(barX + 1, currentY, block.ToString(), color, theme.Background);
+                            }
                         }
                     }
+                }
+                
+                // Draw peak indicators (only when playing)
+                if (!isPaused && barHeight > 0 && barHeight < height - 1)
+                {
+                    int peakY = y + height - 1 - barHeight;
+                    WriteToBuffer(x + i * barWidth, peakY, "●", theme.Highlight, theme.Background);
                 }
             }
         }
 
         static void DrawWaveVisualizer(int x, int y, int width, int height, ThemeColors theme)
         {
-            int points = Math.Min(width, audioData.Length);
-            int[] wavePoints = new int[points];
+            int points = Math.Min(width * 2, audioData.Length);
             
+            int[] wavePoints = new int[points];
             for (int i = 0; i < points; i++)
             {
-                float intensity = audioData[i] * (1f + (float)Math.Sin(animationFrame * 0.8f + i * 0.05f) * 0.2f);
-                wavePoints[i] = y + height - 1 - (int)(intensity * height);
+                float pos = (float)i / points;
+                float bassInfluence = audioData[(int)(pos * 0.2f * audioData.Length)] * 0.6f;
+                float midInfluence = audioData[(int)(pos * 0.6f * audioData.Length)] * 0.8f;
+                float trebleInfluence = audioData[(int)(pos * audioData.Length)] * 0.4f;
+                
+                float combined = (bassInfluence + midInfluence + trebleInfluence) / 3f;
+                float movement = isPaused ? 0f : (float)Math.Sin(animationFrame * 0.8f + i * 0.02f) * 0.1f;
+                float intensity = combined * (1f + movement);
+                
+                wavePoints[i] = y + height - 1 - (int)(intensity * height * 1.1f);
             }
             
-            for (int i = 0; i < points - 1; i++)
+            // Draw smoothed wave
+            for (int i = 0; i < points - 2; i++)
             {
-                int x1 = x + i;
-                int x2 = x + i + 1;
-                if (x1 >= x && x2 < x + width)
+                int x1 = x + i / 2;
+                int x2 = x + (i + 2) / 2;
+                
+                if (x1 >= x && x2 < x + width && x1 != x2)
                 {
-                    DrawLine(x1, wavePoints[i], x2, wavePoints[i + 1], '●', theme.Visualizer1, theme);
+                    char waveChar = i % 4 == 0 ? '●' : '·';
+                    DrawLine(x1, wavePoints[i], x2, wavePoints[i + 2], waveChar, theme.Visualizer1, theme);
+                }
+            }
+            
+            // Draw filled wave area (only when playing or during decay)
+            if (!isPaused || pauseTimer > 0)
+            {
+                for (int i = 0; i < points - 1; i++)
+                {
+                    int currentX = x + i / 2;
+                    if (currentX >= x && currentX < x + width)
+                    {
+                        int waveY = wavePoints[i];
+                        int bottomY = y + height - 1;
+                        
+                        for (int fillY = waveY + 1; fillY <= bottomY; fillY++)
+                        {
+                            float fillRatio = (float)(fillY - waveY) / (bottomY - waveY);
+                            char fillChar = fillRatio < 0.3f ? '░' : 
+                                          fillRatio < 0.6f ? '▒' : '▓';
+                            ConsoleColor fillColor = GetGradientColor(bottomY - fillY, bottomY - waveY, theme);
+                            WriteToBuffer(currentX, fillY, fillChar.ToString(), fillColor, theme.Background);
+                        }
+                    }
                 }
             }
         }
@@ -1382,22 +1602,36 @@ namespace TerminalMusicPlayer
 
         static void DrawSpectrumVisualizer(int x, int y, int width, int height, ThemeColors theme)
         {
-            int bandCount = Math.Min(width / 2, spectrumData.Length);
+            int bandCount = Math.Min(width / 3, spectrumData.Length * 2);
             
             for (int i = 0; i < bandCount; i++)
             {
-                float intensity = spectrumData[i] * (1f + (float)Math.Sin(animationFrame * 0.7f + i * 0.1f) * 0.2f);
-                int barHeight = (int)(intensity * height);
+                float logPos = (float)Math.Log(i + 1) / (float)Math.Log(bandCount + 1);
+                int dataIndex = (int)(logPos * spectrumData.Length);
+                dataIndex = Math.Clamp(dataIndex, 0, spectrumData.Length - 1);
+                
+                float intensity = spectrumData[dataIndex];
+                
+                float response = dataIndex < spectrumData.Length / 4 ? 1.4f : 
+                                dataIndex < spectrumData.Length / 2 ? 1.2f : 1.0f;
+                
+                intensity *= response;
+                int barHeight = (int)(intensity * height * 1.2f);
+                
                 ConsoleColor color = GetVisualizerColor(intensity, theme);
                 
                 for (int h = 0; h < barHeight; h++)
                 {
                     int currentY = y + height - 1 - h;
-                    int barX = x + i * 2;
-                    if (barX < x + width - 1)
+                    if (currentY >= y && currentY < y + height)
                     {
-                        WriteToBuffer(barX, currentY, "█", color, theme.Background);
-                        WriteToBuffer(barX + 1, currentY, "█", color, theme.Background);
+                        ConsoleColor bandColor = GetGradientColor(h, barHeight, theme);
+                        int bandX = x + i * 3;
+                        if (bandX < x + width - 2)
+                        {
+                            string block = GetSpectrumBlock(h, barHeight);
+                            WriteToBuffer(bandX, currentY, block, bandColor, theme.Background);
+                        }
                     }
                 }
             }
@@ -1454,7 +1688,6 @@ namespace TerminalMusicPlayer
                     }
                 }
                 
-                // Draw frequency labels for some bands
                 if (i % 4 == 0 && barHeight > 2)
                 {
                     string freqLabel = GetFrequencyLabel(i, bandCount);
@@ -1483,6 +1716,22 @@ namespace TerminalMusicPlayer
                     WriteToBuffer(pointX, pointY, "●", GetVisualizerColor(intensity, theme), theme.Background);
                 }
             }
+        }
+
+        static string GetSpectrumBlock(int currentHeight, int totalHeight)
+        {
+            if (currentHeight == totalHeight - 1) return "▀";
+            if (currentHeight > totalHeight * 0.8f) return "▓";
+            if (currentHeight > totalHeight * 0.5f) return "▒";
+            return "░";
+        }
+
+        static ConsoleColor GetGradientColor(int height, int maxHeight, ThemeColors theme)
+        {
+            float ratio = (float)height / maxHeight;
+            if (ratio > 0.8f) return theme.Visualizer1;
+            if (ratio > 0.5f) return theme.Visualizer2;
+            return theme.Visualizer3;
         }
 
         static string GetFrequencyLabel(int band, int totalBands)
@@ -1850,6 +2099,14 @@ namespace TerminalMusicPlayer
                 case ConsoleKey.DownArrow:
                     AdjustVolume(-5);
                     break;
+                case ConsoleKey.Add:
+                case ConsoleKey.OemPlus:
+                    AdjustVisualizerIntensity(0.1f);
+                    break;
+                case ConsoleKey.Subtract:
+                case ConsoleKey.OemMinus:
+                    AdjustVisualizerIntensity(-0.1f);
+                    break;
                 case ConsoleKey.F:
                     ToggleShuffle();
                     break;
@@ -1883,6 +2140,13 @@ namespace TerminalMusicPlayer
                     isRunning = false;
                     break;
             }
+        }
+
+        static void AdjustVisualizerIntensity(float delta)
+        {
+            visualizerIntensity = Math.Clamp(visualizerIntensity + delta, 0.5f, 2.0f);
+            needsRedraw = true;
+            ShowStatusMessage($"Visualizer Intensity: {visualizerIntensity:0.0}x");
         }
 
         static void CycleVisualizerMode()
@@ -2125,6 +2389,8 @@ namespace TerminalMusicPlayer
             }
 
             isPaused = false;
+            visualizerPaused = false;
+            pauseTimer = 0f;
             needsRedraw = true;
             ShowStatusMessage($"Now playing: {Path.GetFileNameWithoutExtension(track)}");
         }
